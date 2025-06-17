@@ -16,6 +16,8 @@ import {
   Plus,
 } from "lucide-react"
 import Link from "next/link"
+import { remindersAPI } from "@/lib/api"
+import { useRouter } from "next/navigation"
 
 interface Reminder {
   id: string
@@ -34,39 +36,55 @@ interface Reminder {
 export default function RemindersPage() {
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [user, setUser] = useState<any>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState("")
+  const router = useRouter()
 
   useEffect(() => {
     const session = localStorage.getItem("session")
-    if (session) {
+    const token = localStorage.getItem("token")
+
+    if (session && token) {
       const userData = JSON.parse(session)
       setUser(userData)
       loadReminders()
+    } else {
+      router.push("/auth/sign-in")
     }
-  }, [])
+  }, [router])
 
   const loadReminders = async () => {
-    if (!user?.id) return
-
     try {
-      const response = await fetch(`/api/reminders?user_id=${user.id}`)
-      const data = await response.json()
-      setReminders(data.reminders || [])
-    } catch (error) {
+      setIsLoading(true)
+      const data = await remindersAPI.getUpcoming()
+
+      // Transform API response to match our interface
+      const transformedReminders = (data.reminders || data || []).map((reminder: any) => ({
+        id: reminder.id,
+        text: reminder.text || reminder.title || reminder.description,
+        category: reminder.category || "other",
+        datetime: reminder.datetime || reminder.scheduled_at || reminder.due_date,
+        location: reminder.location,
+        priority: reminder.priority || "medium",
+        completed: reminder.completed || reminder.status === "completed",
+      }))
+
+      setReminders(transformedReminders)
+    } catch (error: any) {
       console.error("Error loading reminders:", error)
+      setError(error.message)
+    } finally {
+      setIsLoading(false)
     }
   }
 
   const toggleComplete = async (id: string, completed: boolean) => {
     try {
-      await fetch(`/api/reminders/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ completed: !completed }),
-      })
-
+      await remindersAPI.update(id, { completed: !completed })
       setReminders((prev) => prev.map((r) => (r.id === id ? { ...r, completed: !completed } : r)))
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error updating reminder:", error)
+      setError(error.message)
     }
   }
 
@@ -98,6 +116,17 @@ export default function RemindersPage() {
   const activeReminders = reminders.filter((r) => !r.completed)
   const completedReminders = reminders.filter((r) => r.completed)
 
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-6">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-slate-600">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
       {/* Header */}
@@ -126,75 +155,97 @@ export default function RemindersPage() {
       </div>
 
       <div className="p-6 space-y-4">
+        {/* Error Message */}
+        {error && (
+          <Card className="border-red-200 bg-red-50">
+            <CardContent className="p-4">
+              <p className="text-red-700 text-sm">{error}</p>
+              <Button onClick={loadReminders} variant="outline" size="sm" className="mt-2">
+                Retry
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Loading State */}
+        {isLoading && (
+          <div className="text-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+            <p className="mt-4 text-slate-600">Loading reminders...</p>
+          </div>
+        )}
+
         {/* Active Reminders */}
-        {activeReminders.map((reminder, index) => (
-          <Card
-            key={reminder.id}
-            className="border-0 shadow-lg hover:shadow-xl transition-all duration-200 bg-white/70 backdrop-blur-sm animate-fade-in"
-            style={{ animationDelay: `${index * 0.1}s` }}
-          >
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between">
-                <div className="flex items-start space-x-4 flex-1">
-                  <div
-                    className={`w-4 h-4 rounded-full bg-gradient-to-r ${getCategoryColor(reminder.category)} mt-1 shadow-sm`}
-                  />
-                  <div className="flex-1">
-                    <p className="text-slate-800 leading-relaxed font-medium">{reminder.text}</p>
-                    <div className="flex items-center space-x-4 mt-3 text-xs text-slate-500">
-                      {reminder.datetime && (
-                        <div className="flex items-center space-x-1 bg-slate-100 px-2 py-1 rounded-lg">
-                          <Clock className="h-3 w-3" />
-                          <span>
-                            {new Date(reminder.datetime).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                        </div>
-                      )}
-                      {reminder.location && (
-                        <div className="flex items-center space-x-1 bg-slate-100 px-2 py-1 rounded-lg">
-                          <MapPin className="h-3 w-3" />
-                          <span>{reminder.location.name}</span>
-                        </div>
-                      )}
+        {!isLoading &&
+          activeReminders.map((reminder, index) => (
+            <Card
+              key={reminder.id}
+              className="border-0 shadow-lg hover:shadow-xl transition-all duration-200 bg-white/70 backdrop-blur-sm animate-fade-in"
+              style={{ animationDelay: `${index * 0.1}s` }}
+            >
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start space-x-4 flex-1">
+                    <div
+                      className={`w-4 h-4 rounded-full bg-gradient-to-r ${getCategoryColor(reminder.category)} mt-1 shadow-sm`}
+                    />
+                    <div className="flex-1">
+                      <p className="text-slate-800 leading-relaxed font-medium">{reminder.text}</p>
+                      <div className="flex items-center space-x-4 mt-3 text-xs text-slate-500">
+                        {reminder.datetime && (
+                          <div className="flex items-center space-x-1 bg-slate-100 px-2 py-1 rounded-lg">
+                            <Clock className="h-3 w-3" />
+                            <span>
+                              {new Date(reminder.datetime).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </div>
+                        )}
+                        {reminder.location && (
+                          <div className="flex items-center space-x-1 bg-slate-100 px-2 py-1 rounded-lg">
+                            <MapPin className="h-3 w-3" />
+                            <span>{reminder.location.name}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
+                  <Button
+                    onClick={() => toggleComplete(reminder.id, reminder.completed)}
+                    variant="ghost"
+                    size="sm"
+                    className="p-2 text-slate-300 hover:text-emerald-500 hover:bg-emerald-50 rounded-xl transition-colors"
+                  >
+                    <CheckCircle2 className="h-5 w-5" />
+                  </Button>
                 </div>
-                <Button
-                  onClick={() => toggleComplete(reminder.id, reminder.completed)}
-                  variant="ghost"
-                  size="sm"
-                  className="p-2 text-slate-300 hover:text-emerald-500 hover:bg-emerald-50 rounded-xl transition-colors"
-                >
-                  <CheckCircle2 className="h-5 w-5" />
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+              </CardContent>
+            </Card>
+          ))}
 
         {/* Completed Reminders */}
-        {completedReminders.slice(0, 3).map((reminder, index) => (
-          <Card
-            key={reminder.id}
-            className="border-0 bg-slate-100/50 backdrop-blur-sm opacity-60 animate-fade-in"
-            style={{ animationDelay: `${(activeReminders.length + index) * 0.1}s` }}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-center space-x-3">
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                <span className="text-slate-500 line-through text-sm">{reminder.text}</span>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+        {!isLoading &&
+          completedReminders.slice(0, 3).map((reminder, index) => (
+            <Card
+              key={reminder.id}
+              className="border-0 bg-slate-100/50 backdrop-blur-sm opacity-60 animate-fade-in"
+              style={{ animationDelay: `${(activeReminders.length + index) * 0.1}s` }}
+            >
+              <CardContent className="p-4">
+                <div className="flex items-center space-x-3">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                  <span className="text-slate-500 line-through text-sm">{reminder.text}</span>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
 
         {/* Empty State */}
-        {activeReminders.length === 0 && completedReminders.length === 0 && (
+        {!isLoading && activeReminders.length === 0 && completedReminders.length === 0 && !error && (
           <div className="text-center py-20 animate-fade-in">
             <div className="w-20 h-20 bg-gradient-to-r from-blue-100 to-indigo-100 rounded-3xl flex items-center justify-center mx-auto mb-6">
               <Plus className="h-8 w-8 text-slate-400" />
