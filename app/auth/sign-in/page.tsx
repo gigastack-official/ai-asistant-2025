@@ -1,8 +1,6 @@
 "use client"
 
-import type React from "react"
-
-import { useState } from "react"
+import React, { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -11,7 +9,33 @@ import { Eye, EyeOff, Loader2 } from "lucide-react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 
-const API_BASE_URL = "https://192.168.100.58:8443"
+// --- Mock Auth API ---
+const mockAuthAPI = {
+  signIn: async ({
+    username,
+    password,
+  }: {
+    username: string
+    password: string
+  }) => {
+    // эмуляция задержки
+    await new Promise((res) => setTimeout(res, 500))
+    // простая проверка
+    if (username === "anton" && password === "Anton123") {
+      return {
+        token: "mock-token-12345",
+        user: {
+          id: "123",
+          username: "anton",
+          name: "Anton123",
+        },
+      }
+    } else {
+      throw new Error("Неверное имя пользователя или пароль (mock)")
+    }
+  },
+}
+// --------------------------------
 
 export default function SignInPage() {
   const [username, setUsername] = useState("")
@@ -27,46 +51,24 @@ export default function SignInPage() {
     setError("")
 
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/sign-in`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          username,
-          password,
-        }),
-      })
+      const data = await mockAuthAPI.signIn({ username, password })
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.message || errorData.error || `Ошибка ${response.status}`)
-      }
+      // Save mock token and user data
+      localStorage.setItem("token", data.token)
+      localStorage.setItem(
+        "session",
+        JSON.stringify({
+          id: data.user.id,
+          username: data.user.username,
+          name: data.user.name,
+        })
+      )
 
-      const data = await response.json()
-
-      // Save JWT token and user data
-      if (data.token || data.jwt || data.access_token) {
-        const token = data.token || data.jwt || data.access_token
-        localStorage.setItem("token", token)
-        localStorage.setItem(
-          "session",
-          JSON.stringify({
-            id: data.user?.id || data.id || username,
-            username: data.user?.username || data.username || username,
-            email: data.user?.email || data.email,
-            name: data.user?.name || data.name || username,
-          }),
-        )
-
-        // Redirect to main page
-        router.push("/")
-      } else {
-        throw new Error("Токен не получен")
-      }
+      // Redirect to main page
+      router.push("/")
     } catch (err: any) {
-      console.error("Sign-in error:", err)
-      setError(err.message || "Ошибка входа в систему")
+      console.error("Sign-in error (mock):", err)
+      setError(err.message || "Ошибка входа в систему (mock)")
     } finally {
       setIsLoading(false)
     }
@@ -160,7 +162,10 @@ export default function SignInPage() {
           <div className="text-center">
             <p className="text-slate-600">
               Нет аккаунта?{" "}
-              <Link href="/auth/sign-up" className="text-blue-600 hover:text-blue-700 font-medium transition-colors">
+              <Link
+                href="/auth/sign-up"
+                className="text-blue-600 hover:text-blue-700 font-medium transition-colors"
+              >
                 Зарегистрироваться
               </Link>
             </p>

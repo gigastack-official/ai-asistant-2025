@@ -1,280 +1,227 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
-import { Mic, Menu, CheckCircle2, List, Settings, LogOut, Send } from "lucide-react"
+import {
+  Mic,
+  Menu,
+  CheckCircle2,
+  List,
+  Settings,
+  LogOut,
+  Send,
+} from "lucide-react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
-import { remindersAPI } from "@/lib/api"
-import { NotificationPermission } from "@/components/notification-permission"
-import { WebSocketStatus } from "@/components/websocket-status"
-import { useWebSocket } from "@/hooks/use-websocket"
+
+// Mocked server functionality
+const mockRemindersAPI = {
+  create: async (text: string = "", audio?: Blob) => {
+    console.log("[Mock] Creating reminder", { text, audio })
+    // simulate network delay
+    await new Promise((resolve) => setTimeout(resolve, 3000))
+    return { message: "Напоминание создано!" }
+  },
+  getNotifications: async () => {
+    console.log("[Mock] Fetching notifications")
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    // return empty notifications by default
+    return { notifications: [] as { message: string }[] }
+  },
+}
 
 export default function ReminderApp() {
   const [newReminder, setNewReminder] = useState("")
   const [answerText, setAnswerText] = useState("")
   const [isRecording, setIsRecording] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [user, setUser] = useState(null)
+  const [user, setUser] = useState<any>(null)
   const [showSuccess, setShowSuccess] = useState(false)
   const [showMenu, setShowMenu] = useState(false)
   const router = useRouter()
 
-  const mediaRecorderRef = useRef(null)
-  const chunksRef = useRef([])
-  const streamRef = useRef(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const streamRef = useRef<MediaStream | null>(null)
 
-  // Stable callback functions
-  const handleWebSocketMessage = useCallback((type: string, data: any) => {
-    console.log("Received WebSocket message:", type, data)
-
-    switch (type) {
-      case "reminder_created":
-        setAnswerText("✅ Напоминание создано и синхронизировано!")
-        setShowSuccess(true)
-        setTimeout(() => setShowSuccess(false), 3000)
-        break
-      case "reminder_notification":
-        // Notification will be handled automatically by WebSocket manager
-        break
-      case "system_notification":
-        setAnswerText(data.message || "Системное уведомление")
-        break
-    }
-  }, [])
-
-  const handleWebSocketConnect = useCallback(() => {
-    console.log("WebSocket connected successfully")
-  }, [])
-
-  const handleWebSocketDisconnect = useCallback((event: any) => {
-    console.log("WebSocket disconnected:", event)
-  }, [])
-
-  const handleWebSocketError = useCallback((error: any) => {
-    console.error("WebSocket error:", error)
-  }, [])
-
-  // WebSocket integration with stable callbacks
-  const { isConnected, sendMessage, requestNotificationPermission } = useWebSocket({
-    onMessage: handleWebSocketMessage,
-    onConnect: handleWebSocketConnect,
-    onDisconnect: handleWebSocketDisconnect,
-    onError: handleWebSocketError,
-  })
-
+  /* -------------------- Session Handling -------------------- */
   useEffect(() => {
     const session = localStorage.getItem("session")
     const token = localStorage.getItem("token")
-
     if (session && token) {
-      setUser(JSON.parse(session))
+      setUser({ ...JSON.parse(session), token })
+      Notification.requestPermission()
     } else {
       router.push("/auth/sign-in")
     }
   }, [router])
 
-  // Request notification permission when user is loaded
+  /* -------------------- Polling every 5 seconds (mocked) -------------------- */
   useEffect(() => {
-    if (user) {
-      // Small delay to avoid being too intrusive
-      setTimeout(() => {
-        if (Notification.permission === "default") {
-          // NotificationPermission component will handle this
-        }
-      }, 2000)
-    }
+    if (!user) return
+    const interval = setInterval(async () => {
+      try {
+        const { notifications } = await mockRemindersAPI.getNotifications()
+        notifications.forEach((n: { message: string }) => {
+          if (Notification.permission === "granted") {
+            new Notification("Напоминание", { body: n.message })
+          }
+        })
+      } catch (e) {
+        console.error("[Mock] Polling error:", e)
+      }
+    }, 5000)
+    return () => clearInterval(interval)
   }, [user])
 
-  // Send text reminder
+  /* -------------------- Reminders API (mocked) -------------------- */
   const sendTextReminder = async () => {
     if (!newReminder.trim()) return
-
     setIsLoading(true)
     try {
-      const result = await remindersAPI.create(newReminder)
-      setAnswerText(result.message || "Напоминание создано!")
+      const res = await mockRemindersAPI.create(newReminder)
+      setAnswerText(res.message)
       setNewReminder("")
       setShowSuccess(true)
       setTimeout(() => setShowSuccess(false), 3000)
-
-      // Send WebSocket message to notify about new reminder
-      if (isConnected) {
-        sendMessage("reminder_created", {
-          text: newReminder,
-          timestamp: new Date().toISOString(),
-        })
-      }
-    } catch (err: any) {
-      console.error("Error creating reminder:", err)
-      setAnswerText(`Ошибка: ${err.message}`)
+    } catch (e: any) {
+      setAnswerText(`Ошибка: ${e.message}`)
     } finally {
       setIsLoading(false)
     }
   }
 
-  // Send audio reminder
   const sendAudio = async (blob: Blob) => {
     setIsLoading(true)
     try {
-      const result = await remindersAPI.create("", blob)
-      setAnswerText(result.message || result.responseText || "Напоминание создано!")
+      const res = await mockRemindersAPI.create("", blob)
+      setAnswerText(res.message)
       setShowSuccess(true)
       setTimeout(() => setShowSuccess(false), 3000)
-
-      // Send WebSocket message to notify about new audio reminder
-      if (isConnected) {
-        sendMessage("audio_reminder_created", {
-          type: "audio",
-          timestamp: new Date().toISOString(),
-        })
-      }
-    } catch (err: any) {
-      console.error("Error creating audio reminder:", err)
-      setAnswerText(`Ошибка: ${err.message}`)
+    } catch (e: any) {
+      setAnswerText(`Ошибка: ${e.message}`)
     } finally {
       setIsLoading(false)
     }
   }
 
+  /* -------------------- Audio Recording -------------------- */
   const toggleRecording = async () => {
     if (isRecording) {
-      // Stop recording
       mediaRecorderRef.current?.stop()
-      streamRef.current?.getTracks().forEach((track) => track.stop())
+      streamRef.current?.getTracks().forEach((t) => t.stop())
       setIsRecording(false)
     } else {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
         streamRef.current = stream
-
-        const mediaRecorder = new MediaRecorder(stream)
-        mediaRecorderRef.current = mediaRecorder
+        const mr = new MediaRecorder(stream)
+        mediaRecorderRef.current = mr
         chunksRef.current = []
-
-        mediaRecorder.ondataavailable = (e) => {
+        mr.ondataavailable = (e) => {
           if (e.data.size > 0) chunksRef.current.push(e.data)
         }
-
-        mediaRecorder.onstop = async () => {
-          const blob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType })
+        mr.onstop = async () => {
+          const blob = new Blob(chunksRef.current, { type: mr.mimeType })
           await sendAudio(blob)
         }
-
-        mediaRecorder.start()
+        mr.start()
         setIsRecording(true)
-      } catch (err) {
-        console.error("Recording error:", err)
+      } catch {
         setAnswerText("Ошибка доступа к микрофону")
       }
     }
   }
 
+  /* -------------------- Logout -------------------- */
   const logout = () => {
     localStorage.removeItem("session")
     localStorage.removeItem("token")
-    setUser(null)
-    setShowMenu(false)
     router.push("/auth/sign-in")
-  }
-
-  const handleNotificationPermissionGranted = () => {
-    console.log("Notification permission granted")
-    setAnswerText("🔔 Уведомления включены!")
-    setTimeout(() => setAnswerText(""), 3000)
-  }
-
-  const handleNotificationPermissionDenied = () => {
-    console.log("Notification permission denied")
-    setAnswerText("⚠️ Уведомления отключены")
-    setTimeout(() => setAnswerText(""), 3000)
   }
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-6">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-slate-600">Loading...</p>
-        </div>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin h-8 w-8 border-b-2 border-blue-600" />
       </div>
     )
   }
 
+  /* -------------------- JSX -------------------- */
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 relative">
-      {/* Notification Permission Prompt */}
-      <NotificationPermission
-        onPermissionGranted={handleNotificationPermissionGranted}
-        onPermissionDenied={handleNotificationPermissionDenied}
-      />
-
-      {/* WebSocket Status Indicator */}
-      <WebSocketStatus />
-
       <Button
-        onClick={() => setShowMenu(!showMenu)}
+        onClick={() => setShowMenu((v) => !v)}
         variant="ghost"
         size="sm"
-        className="absolute top-6 left-6 z-50 w-12 h-12 p-0 rounded-2xl hover:bg-white/80 backdrop-blur-sm transition-all duration-200 shadow-lg"
+        className="absolute top-6 left-6 z-50 w-12 h-12 p-0 rounded-2xl hover:bg-white/80 backdrop-blur-sm shadow-lg"
       >
         <Menu className="h-6 w-6 text-slate-600" />
       </Button>
       {showMenu && (
         <>
-          <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40" onClick={() => setShowMenu(false)} />
-          <Card className="fixed top-20 left-6 w-56 border-0 shadow-2xl bg-white/95 backdrop-blur-md z-50 animate-fade-in">
+          <div
+            className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40"
+            onClick={() => setShowMenu(false)}
+          />
+          <Card className="fixed top-20 left-6 w-56 shadow-2xl bg-white/95 backdrop-blur-md z-50">
             <CardContent className="p-4 space-y-2">
               <Link href="/reminders">
                 <Button
                   variant="ghost"
-                  className="w-full justify-start h-12 px-4 rounded-xl hover:bg-blue-50"
+                  className="w-full justify-start h-12 rounded-xl hover:bg-blue-50"
                   onClick={() => setShowMenu(false)}
                 >
-                  <List className="h-5 w-5 mr-3" />
-                  Reminders
+                  <List className="h-5 w-5 mr-3" /> Напоминания
                 </Button>
               </Link>
               <Link href="/settings">
                 <Button
                   variant="ghost"
-                  className="w-full justify-start h-12 px-4 rounded-xl hover:bg-blue-50"
+                  className="w-full justify-start h-12 rounded-xl hover:bg-blue-50"
                   onClick={() => setShowMenu(false)}
                 >
-                  <Settings className="h-5 w-5 mr-3" />
-                  Settings
+                  <Settings className="h-5 w-5 mr-3" /> Настройки
                 </Button>
               </Link>
               <Button
                 variant="ghost"
-                className="w-full justify-start h-12 px-4 rounded-xl hover:bg-red-50"
+                className="w-full justify-start h-12 rounded-xl hover:bg-red-50"
                 onClick={logout}
               >
-                <LogOut className="h-5 w-5 mr-3" />
-                Logout
+                <LogOut className="h-5 w-5 mr-3" /> Выйти
               </Button>
             </CardContent>
           </Card>
         </>
       )}
+
       {showSuccess && (
         <div className="fixed top-6 right-6 z-30 animate-fade-in">
-          <div className="bg-gradient-to-r from-emerald-500 to-green-500 text-white p-3 rounded-2xl shadow-lg">
+          <div className="bg-green-500 text-white p-3 rounded-2xl shadow-lg">
             <CheckCircle2 className="h-6 w-6" />
           </div>
         </div>
       )}
+
       <div className="flex items-center justify-center min-h-screen p-6">
         <div className="w-full max-w-md space-y-12">
-          {answerText && <div className="text-center text-lg font-medium text-indigo-700">{answerText}</div>}
+          {answerText && (
+            <div className="text-center text-lg font-medium text-indigo-700">
+              {answerText}
+            </div>
+          )}
           <div className="relative">
             <Input
               value={newReminder}
               onChange={(e) => setNewReminder(e.target.value)}
-              onKeyPress={(e) => e.key === "Enter" && !isLoading && !isRecording && sendTextReminder()}
-              className="h-16 text-lg bg-white/60 backdrop-blur-sm rounded-2xl text-center shadow-lg focus:bg-white focus:shadow-xl placeholder:text-slate-400 pr-20"
+              onKeyPress={(e) =>
+                e.key === "Enter" && !isLoading && !isRecording && sendTextReminder()
+              }
+              className="h-16 text-lg bg-white/60 backdrop-blur-sm rounded-2xl text-center shadow-lg focus:bg-white placeholder:text-slate-400 pr-20"
               disabled={isLoading || isRecording}
               placeholder="Что нужно запомнить?"
             />
@@ -282,40 +229,42 @@ export default function ReminderApp() {
               <Button
                 onClick={sendTextReminder}
                 disabled={isLoading || isRecording}
-                className="absolute right-3 top-3 h-10 w-10 p-0 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 rounded-xl shadow-md flex items-center justify-center transition-all duration-200"
+                className="absolute right-3 top-3 h-10 w-10 p-0 bg-blue-500 text-white rounded-xl shadow-md"
               >
-                <Send className="h-4 w-4 text-white" />
+                <Send className="h-4 w-4" />
               </Button>
             )}
           </div>
+
           <div className="flex justify-center">
             <Button
               onClick={toggleRecording}
               disabled={isLoading}
-              className={`w-32 h-32 rounded-3xl shadow-2xl transition-transform duration-300 ${isRecording ? "bg-gradient-to-r from-red-500 to-pink-500 animate-pulse" : "bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700"}`}
+              className={`w-32 h-32 rounded-3xl shadow-2xl transition-transform ${
+                isRecording
+                  ? "bg-red-500 animate-pulse"
+                  : "bg-blue-500 hover:bg-blue-600"
+              }`}
             >
-              <Mic className="!h-[50px] !w-[50px] text-white" />
+              <Mic className="!h-12 !w-12 text-white" />
             </Button>
           </div>
+
           {isRecording && (
             <div className="flex justify-center animate-fade-in">
-              <div className="flex items-center space-x-3 bg-white/70 backdrop-blur-sm px-6 py-3 rounded-2xl shadow-lg">
+              <div className="flex items-center space-x-3 bg-white/70 p-4 rounded-2xl shadow-lg">
                 <div className="flex space-x-1">
-                  <div className="w-1.5 h-4 bg-red-500 rounded-full animate-pulse" />
-                  <div className="w-1.5 h-6 bg-red-500 rounded-full animate-pulse" style={{ animationDelay: "0.1s" }} />
-                  <div className="w-1.5 h-3 bg-red-500 rounded-full animate-pulse" style={{ animationDelay: "0.2s" }} />
-                  <div className="w-1.5 h-5 bg-red-500 rounded-full animate-pulse" style={{ animationDelay: "0.3s" }} />
+                  {[0, 1, 2, 3].map((i) => (
+                    <div
+                      key={i}
+                      className="w-1.5 rounded-full bg-red-500 animate-pulse"
+                      style={{ height: `${4 + i * 2}px`, animationDelay: `${i * 0.1}s` }}
+                    />
+                  ))}
                 </div>
-                <span className="text-sm text-slate-700 font-medium">Recording... Tap to stop</span>
-              </div>
-            </div>
-          )}
-
-          {/* Connection Status Info */}
-          {!isConnected && (
-            <div className="text-center">
-              <div className="text-xs text-amber-600 bg-amber-50 p-3 rounded-xl">
-                ⚠️ Нет подключения к серверу. Уведомления могут не работать.
+                <span className="text-sm text-slate-700">
+                  Идет запись
+                </span>
               </div>
             </div>
           )}
